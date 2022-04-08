@@ -22,6 +22,7 @@ req = {'img':string_img}
 
 r = requests.post('http://0.0.0.0:8003', json=req)
 txt = json.loads(r.text)
+print(txt['keypoints'])
 
 img = base64.b64decode(txt['img'].encode('utf-8'))
 

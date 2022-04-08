@@ -31,6 +31,8 @@ KEYPOINT_DICT = {
     'right_ankle': 16
 }
 
+REV_KEYPOINT_DICT = {v:k for k,v in KEYPOINT_DICT.items()}
+
 # Maps bones to a matplotlib color name.
 KEYPOINT_EDGE_INDS_TO_COLOR = {
 (0, 1): [191 ,  0 ,191],
@@ -53,10 +55,10 @@ KEYPOINT_EDGE_INDS_TO_COLOR = {
 (14, 16) :[  0 ,191 ,191]
 }
 
-def _keypoints_and_edges_for_display(keypoints_with_scores,
+def keypoints_and_edges(keypoints_with_scores,
                                     height,
                                     width,
-                                    keypoint_threshold=0.11):
+                                    keypoint_threshold=0.3):
     """Returns high confidence keypoints and edges for visualization.
 
     Args:
@@ -74,18 +76,25 @@ def _keypoints_and_edges_for_display(keypoints_with_scores,
         * the colors in which the edges should be plotted.
     """
     keypoints_all = []
+    keypoints_with_th = []
     keypoint_edges_all = []
     edge_colors = []
+    scores_all = []
+    keypoints_all_above_thresh=[]
     num_instances, _, _, _ = keypoints_with_scores.shape
     for idx in range(num_instances):
         kpts_x = keypoints_with_scores[0, idx, :, 1]
         kpts_y = keypoints_with_scores[0, idx, :, 0]
         kpts_scores = keypoints_with_scores[0, idx, :, 2]
+        scores_all.append(kpts_scores)
         kpts_absolute_xy = np.stack(
             [width * np.array(kpts_x), height * np.array(kpts_y)], axis=-1).astype(np.int32)
+        keypoints_all.append(kpts_absolute_xy)
         kpts_above_thresh_absolute = kpts_absolute_xy[
             kpts_scores > keypoint_threshold, :]
-        keypoints_all.append(kpts_above_thresh_absolute)
+        keypoints_all_above_thresh.append(kpts_above_thresh_absolute)
+
+
 
         for edge_pair, color in KEYPOINT_EDGE_INDS_TO_COLOR.items():
             if (kpts_scores[edge_pair[0]] > keypoint_threshold and
@@ -97,8 +106,8 @@ def _keypoints_and_edges_for_display(keypoints_with_scores,
                 line_seg = np.array([[x_start, y_start], [x_end, y_end]])
                 keypoint_edges_all.append(line_seg)
                 edge_colors.append(color)
-    if keypoints_all:
-        keypoints_xy = np.concatenate(keypoints_all, axis=0)
+    if keypoints_all_above_thresh:
+        keypoints_xy = np.concatenate(keypoints_all_above_thresh, axis=0)
     else:
         keypoints_xy = np.zeros((0, 17, 2))
 
@@ -106,11 +115,11 @@ def _keypoints_and_edges_for_display(keypoints_with_scores,
         edges_xy = np.stack(keypoint_edges_all, axis=0)
     else:
         edges_xy = np.zeros((0, 2, 2))
-    return keypoints_xy, edges_xy, edge_colors
+    return keypoints_xy, edges_xy, edge_colors, keypoints_all, scores_all
 
 
 def draw_prediction_on_image(
-    image, keypoints_with_scores, crop_region=None, close_figure=False,
+    image, keypoint_edges, edge_colors, crop_region=None, close_figure=False,
     output_image_height=None):
     """Draws the keypoint predictions on image.
 
@@ -130,12 +139,12 @@ def draw_prediction_on_image(
         A numpy array with shape [out_height, out_width, channel] representing the
         image overlaid with keypoint predictions.
     """
-    height, width, channel = image.shape
-    aspect_ratio = float(width) / height
+    # height, width, channel = image.shape
+    # aspect_ratio = float(width) / height
 
-    (keypoint_locs, keypoint_edges,
-    edge_colors) = _keypoints_and_edges_for_display(
-        keypoints_with_scores, height, width)
+    # (keypoint_locs, keypoint_edges,
+    # edge_colors, all_keypoints) = _keypoints_and_edges_for_display(
+    #     keypoints_with_scores, height, width)
 
     for keypoint_edge, edge_color in zip(keypoint_edges, edge_colors):
         (x_start, y_start), (x_end, y_end) = keypoint_edge
@@ -195,14 +204,26 @@ class Server(BaseHTTPRequestHandler):
         input_img = tf.image.resize_with_pad(input_img,192,192)
         
         outputs = movenet(tf.constant(input_img))
+
         
         output_image = tf.cast(content_img, dtype=tf.int32)
-        output_image = draw_prediction_on_image(output_image.numpy(), outputs)
+        height, width, channel = output_image.shape
+        (keypoint_locs, keypoint_edges,
+            edge_colors, all_keypoints, all_scores) = keypoints_and_edges(outputs, height, width)
+        all_keypoints_text = [{REV_KEYPOINT_DICT[i]: 
+                                {'location':(int(point[0]), int(point[1])), 
+                                'confidence':float(score)}
+                                 for i, (point, score) in enumerate(zip(item, scores))
+                                 } for item, scores in zip(all_keypoints, all_scores)]
+        
+        output_image = draw_prediction_on_image(output_image.numpy(), keypoint_edges,
+            edge_colors)
 
 
         jpg_output = tf.io.encode_jpeg(output_image)
 
-        out_message = {'img' : base64.encodebytes(jpg_output.numpy()).decode('utf-8')}
+        out_message = {'img' : base64.encodebytes(jpg_output.numpy()).decode('utf-8'),
+        'keypoints':all_keypoints_text}
         
         # send the message back
         self._set_headers()
