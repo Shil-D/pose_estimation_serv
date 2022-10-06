@@ -1,5 +1,3 @@
-import os
-import pathlib
 from six import BytesIO
 import tensorflow as tf
 import tensorflow_hub as hub
@@ -212,7 +210,7 @@ class Server(BaseHTTPRequestHandler):
             edge_colors, all_keypoints, all_scores) = keypoints_and_edges(outputs, height, width)
         all_keypoints_text = [{REV_KEYPOINT_DICT[i]: 
                                 {'location':(int(point[0]), int(point[1])), 
-                                'confidence':float(score)}
+                                'confidence':f"{float(score):.2f}"}
                                  for i, (point, score) in enumerate(zip(item, scores))
                                  } for item, scores in zip(all_keypoints, all_scores)]
         
